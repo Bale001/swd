@@ -1,9 +1,8 @@
 use crate::{
-    swd::{File, Swd},
+    swd::{Breakpoint, File, Swd},
     tag::Tag,
 };
 use byteorder::{LittleEndian, ReadBytesExt};
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::{
     collections::HashMap,
@@ -23,6 +22,7 @@ impl<T: Read> SwdReader<T> {
         self.read_magic()?;
         let version = self.read_version()?;
         let mut files = HashMap::new();
+        let mut breakpoints = HashMap::new();
         while let Some(tag) = self.read_tag().transpose()? {
             match tag {
                 Tag::SourceFile {
@@ -34,10 +34,10 @@ impl<T: Read> SwdReader<T> {
                     files.insert(
                         file_index,
                         Rc::new(File {
+                            id: file_index,
                             src,
                             name,
-                            line_map: HashMap::new(),
-                            breakpoints: RefCell::new(HashMap::new()),
+                            offset_map: HashMap::new(),
                         }),
                     );
                 }
@@ -47,13 +47,19 @@ impl<T: Read> SwdReader<T> {
                     offset,
                 } => {
                     if let Some(file) = files.get_mut(&file_index).and_then(Rc::get_mut) {
-                        file.line_map.insert(line, offset);
+                        file.offset_map.insert(line, offset);
                     }
                 }
                 Tag::SetBreakpoint { file_index, line } => {
-                    if let Some(file) = files.get_mut(&(file_index as u32)).and_then(Rc::get_mut) {
-                        if let Some(offset) = file.line_map.get(&(line as u32)).cloned() {
-                            file.breakpoints.get_mut().insert(offset, line as u32);
+                    if let Some(file) = files.get(&(file_index as u32)).cloned() {
+                        if let Some(offset) = file.resolve_line(line as u32) {
+                            breakpoints.insert(
+                                offset,
+                                Breakpoint {
+                                    line: line as u32,
+                                    file,
+                                },
+                            );
                         }
                     }
                 }
@@ -61,7 +67,11 @@ impl<T: Read> SwdReader<T> {
                 Tag::Id(_) => (),
             }
         }
-        Ok(Swd { version, files })
+        Ok(Swd {
+            version,
+            files,
+            breakpoints,
+        })
     }
 
     pub fn read_magic(&mut self) -> io::Result<()> {
