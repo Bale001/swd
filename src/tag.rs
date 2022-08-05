@@ -3,8 +3,8 @@ pub enum Tag {
     SourceFile {
         file_index: u32,
         unknown_index: u32,
-        file_name: String,
-        source_code: String,
+        name: String,
+        src: String,
     },
     OffsetMap {
         file_index: u32,
